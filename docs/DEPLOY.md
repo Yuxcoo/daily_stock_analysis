@@ -140,7 +140,71 @@ python main.py --webui
 
 ---
 
-## 🔧 方案三：Systemd 服务
+## ☁️ 方案三：Render 部署
+
+推荐优先使用 Docker Web Service，而不是 Native Python Service。
+
+### 方式 A：Docker Web Service（推荐）
+
+仓库已经提供：
+
+- `docker/Dockerfile`
+- `render.yaml`
+
+在 Render 中直接从仓库创建 Blueprint / Web Service 即可，核心配置如下：
+
+- `Runtime`: `Docker`
+- `Dockerfile Path`: `./docker/Dockerfile`
+- `Docker Context`: `.`
+- `Start Command`: `python main.py --serve-only --host 0.0.0.0 --port $PORT`
+
+建议环境变量至少设置：
+
+```bash
+WEBUI_AUTO_BUILD=false
+WEBUI_HOST=0.0.0.0
+TZ=Asia/Shanghai
+```
+
+说明：
+
+- Docker 镜像构建阶段已经会执行前端 `npm ci` 和 `npm run build`
+- 运行时设置 `WEBUI_AUTO_BUILD=false` 可以避免容器启动时重复构建前端
+- Render 会注入 `PORT`，启动命令里务必绑定到 `$PORT`
+
+### 方式 B：Native Python Service（可用，但更容易踩坑）
+
+如果你坚持用 Python Runtime，而不是 Docker，请把前端构建放到 **Build Command**，不要依赖运行时自动构建：
+
+```bash
+pip install -r requirements.txt && cd apps/dsa-web && npm ci --include=dev && npm run build
+```
+
+**Start Command**：
+
+```bash
+python main.py --serve-only --host 0.0.0.0 --port $PORT
+```
+
+同时建议添加环境变量：
+
+```bash
+WEBUI_AUTO_BUILD=false
+NPM_CONFIG_PRODUCTION=false
+```
+
+如果你看到下面这类错误：
+
+```text
+error TS2688: Cannot find type definition file for 'vite/client'
+error TS2688: Cannot find type definition file for 'node'
+```
+
+通常不是 TypeScript 配置本身有问题，而是 Render 构建时没有安装前端的 devDependencies。`vite/client` 和 `@types/node` 都属于前端构建阶段依赖，需要用 `npm ci --include=dev` 安装。
+
+---
+
+## 🔧 方案四：Systemd 服务
 
 创建 systemd 服务文件实现开机自启和自动重启：
 
@@ -350,7 +414,7 @@ docker-compose -f ./docker/docker-compose.yml up -d
 
 ---
 
-## ☁️ 方案四：GitHub Actions 部署（免服务器）
+## ☁️ 方案五：GitHub Actions 部署（免服务器）
 
 **最简单的方案！** 无需服务器，利用 GitHub 免费计算资源。
 

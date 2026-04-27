@@ -111,3 +111,28 @@ def test_has_static_assets_returns_true_when_css_present(tmp_path):
     assets.mkdir()
     (assets / "style.css").write_text("", encoding="utf-8")
     assert webui_frontend._has_static_assets(tmp_path) is True
+
+
+def test_frontend_install_command_includes_dev_dependencies():
+    assert webui_frontend._frontend_install_command("npm", lock_exists=True) == [
+        "npm",
+        "ci",
+        "--include=dev",
+    ]
+    assert webui_frontend._frontend_install_command("npm", lock_exists=False) == [
+        "npm",
+        "install",
+        "--include=dev",
+    ]
+
+
+def test_manual_build_command_includes_dev_dependencies(tmp_path):
+    frontend_dir = tmp_path / "apps" / "dsa-web"
+    frontend_dir.mkdir(parents=True)
+
+    with_lock = frontend_dir / "package-lock.json"
+    with_lock.write_text("{}", encoding="utf-8")
+    assert "npm ci --include=dev" in webui_frontend._manual_build_command(frontend_dir)
+
+    with_lock.unlink()
+    assert "npm install --include=dev" in webui_frontend._manual_build_command(frontend_dir)

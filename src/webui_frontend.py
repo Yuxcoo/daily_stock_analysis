@@ -121,9 +121,15 @@ def _run_frontend_commands(commands: Sequence[Sequence[str]], frontend_dir: Path
         return False
 
 
+def _frontend_install_command(npm_path: str, lock_exists: bool) -> list[str]:
+    """Install frontend deps including devDependencies even under production envs."""
+    base_command = [npm_path, "ci" if lock_exists else "install"]
+    return [*base_command, "--include=dev"]
+
+
 def _manual_build_command(frontend_dir: Path) -> str:
     lock_file = frontend_dir / "package-lock.json"
-    install_cmd = "npm ci" if lock_file.exists() else "npm install"
+    install_cmd = "npm ci --include=dev" if lock_file.exists() else "npm install --include=dev"
     return f'cd "{frontend_dir}" && {install_cmd} && npm run build'
 
 
@@ -223,7 +229,7 @@ def prepare_webui_frontend_assets() -> bool:
     commands = []
     if needs_install:
         lock_exists = (frontend_dir / "package-lock.json").exists()
-        commands.append([npm_path, "ci" if lock_exists else "install"])
+        commands.append(_frontend_install_command(npm_path=npm_path, lock_exists=lock_exists))
     if needs_build:
         commands.append([npm_path, "run", "build"])
 
