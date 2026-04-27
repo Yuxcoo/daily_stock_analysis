@@ -156,7 +156,7 @@ python main.py --webui
 - `Runtime`: `Docker`
 - `Dockerfile Path`: `./docker/Dockerfile`
 - `Docker Context`: `.`
-- `Start Command`: `python main.py --serve-only --host 0.0.0.0 --port $PORT`
+- `Start Command`: `uvicorn server:app --host 0.0.0.0 --port $PORT`
 
 建议环境变量至少设置：
 
@@ -171,6 +171,7 @@ TZ=Asia/Shanghai
 - Docker 镜像构建阶段已经会执行前端 `npm ci` 和 `npm run build`
 - 运行时设置 `WEBUI_AUTO_BUILD=false` 可以避免容器启动时重复构建前端
 - Render 会注入 `PORT`，启动命令里务必绑定到 `$PORT`
+- 对 Render 这类平台，推荐直接前台启动 `uvicorn server:app`；比经由 `main.py --serve-only` 再启动后台线程更容易被平台正确探测端口与进程状态
 
 ### 方式 B：Native Python Service（可用，但更容易踩坑）
 
@@ -183,7 +184,7 @@ pip install -r requirements.txt && cd apps/dsa-web && npm ci --include=dev && np
 **Start Command**：
 
 ```bash
-python main.py --serve-only --host 0.0.0.0 --port $PORT
+uvicorn server:app --host 0.0.0.0 --port $PORT
 ```
 
 同时建议添加环境变量：

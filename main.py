@@ -594,16 +594,16 @@ def run_full_analysis(
         logger.exception(f"分析流程执行失败: {e}")
 
 
-def start_api_server(host: str, port: int, config: Config) -> None:
+def start_api_server(host: str, port: int, config: Config, *, background: bool = True) -> None:
     """
-    在后台线程启动 FastAPI 服务
+    启动 FastAPI 服务。
 
     Args:
         host: 监听地址
         port: 监听端口
         config: 配置对象
+        background: True 时在后台线程启动；False 时以前台阻塞方式启动
     """
-    import threading
     import uvicorn
 
     def run_server():
@@ -616,9 +616,16 @@ def start_api_server(host: str, port: int, config: Config) -> None:
             log_config=None,
         )
 
-    thread = threading.Thread(target=run_server, daemon=True)
-    thread.start()
-    logger.info(f"FastAPI 服务已启动: http://{host}:{port}")
+    if background:
+        import threading
+
+        thread = threading.Thread(target=run_server, daemon=True)
+        thread.start()
+        logger.info(f"FastAPI 服务已在后台线程启动: http://{host}:{port}")
+        return
+
+    logger.info(f"FastAPI 服务以前台模式启动: http://{host}:{port}")
+    run_server()
 
 
 def _is_truthy_env(var_name: str, default: str = "true") -> bool:
@@ -779,7 +786,12 @@ def main() -> int:
         if not prepare_webui_frontend_assets():
             logger.warning("前端静态资源未就绪，继续启动 FastAPI 服务（Web 页面可能不可用）")
         try:
-            start_api_server(host=args.host, port=args.port, config=config)
+            start_api_server(
+                host=args.host,
+                port=args.port,
+                config=config,
+                background=not args.serve_only,
+            )
             bot_clients_started = True
         except Exception as e:
             logger.error(f"启动 FastAPI 服务失败: {e}")
@@ -789,16 +801,6 @@ def main() -> int:
 
     # === 仅 Web 服务模式：不自动执行分析 ===
     if args.serve_only:
-        logger.info("模式: 仅 Web 服务")
-        logger.info(f"Web 服务运行中: http://{args.host}:{args.port}")
-        logger.info("通过 /api/v1/analysis/analyze 接口触发分析")
-        logger.info(f"API 文档: http://{args.host}:{args.port}/docs")
-        logger.info("按 Ctrl+C 退出...")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("\n用户中断，程序退出")
         return 0
 
     try:

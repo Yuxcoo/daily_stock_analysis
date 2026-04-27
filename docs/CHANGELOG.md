@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [修复] WebUI 运行时自动构建前端改为使用 `npm ci/install --include=dev`，避免 Render 等 production 环境漏装 `@types/node` 与 `vite/client` 导致构建失败。
+- [修复] `main.py --serve-only` 改为以前台阻塞方式启动 Uvicorn，避免 Render 等平台因后台线程启动失败而探测不到监听端口。
 - [文档] 补充 Render 部署说明，并新增 `render.yaml` 复用现有 `docker/Dockerfile` 作为 Blueprint 入口。
 
 ## [3.14.1] - 2026-04-26
