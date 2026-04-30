@@ -210,6 +210,23 @@ journalctl -u stock-analyzer -f
 | `TAVILY_API_KEYS` | - | 新闻搜索（可选） |
 | `MINIMAX_API_KEYS` | - | MiniMax 搜索（可选） |
 
+### 云数据库与缓存（可选）
+
+默认情况下系统继续使用本地 SQLite 文件 `DATABASE_PATH=./data/stock_analysis.db`，无需额外数据库即可运行。若部署在 Render、云服务器或多容器环境，推荐改用 PostgreSQL：
+
+```bash
+STORAGE_MODE=postgresql
+DATABASE_URL=postgresql+psycopg://user:password@host:5432/stock_db
+DB_CACHE_TTL_SECONDS=30
+```
+
+说明：
+
+- `DATABASE_URL` / `PGSQL_URL` 任意配置一个即可，优先级高于 `DATABASE_PATH`。
+- 日线缓存、分析历史、LLM 原始报告 payload、上下文快照、回测、持仓和对话记录会通过 SQLAlchemy 写入 PostgreSQL。
+- `DB_CACHE_TTL_SECONDS` 启用进程内热读缓存，适合历史报告和行情缓存的高频读取；写入后会自动清空缓存。
+- PostgreSQL 已能同时承担主数据和半结构化报告归档；云端部署只需要准备这一套数据库。
+
 ---
 
 ## 🌐 代理配置

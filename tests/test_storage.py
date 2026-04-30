@@ -18,6 +18,90 @@ from src.config import Config
 from src.storage import DatabaseManager, StockDaily
 
 class TestStorage(unittest.TestCase):
+
+    def setUp(self):
+        self._stock_email_groups_patch = patch.object(
+            Config,
+            "_parse_stock_email_groups",
+            return_value=[],
+        )
+        self._stock_email_groups_patch.start()
+
+    def tearDown(self):
+        self._stock_email_groups_patch.stop()
+
+    def test_config_prefers_database_url_for_cloud_sql(self):
+        original_env = {
+            "DATABASE_URL": os.environ.get("DATABASE_URL"),
+            "PGSQL_URL": os.environ.get("PGSQL_URL"),
+            "STORAGE_MODE": os.environ.get("STORAGE_MODE"),
+        }
+        try:
+            os.environ["DATABASE_URL"] = "postgresql://user:pass@example.com:5432/stock"
+            os.environ["STORAGE_MODE"] = "postgresql"
+            Config.reset_instance()
+
+            config = Config.get_instance()
+
+            self.assertEqual(
+                config.get_db_url(),
+                "postgresql+psycopg://user:pass@example.com:5432/stock",
+            )
+        finally:
+            Config.reset_instance()
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_config_normalizes_postgres_url_alias(self):
+        original_env = {
+            "DATABASE_URL": os.environ.get("DATABASE_URL"),
+            "PGSQL_URL": os.environ.get("PGSQL_URL"),
+            "STORAGE_MODE": os.environ.get("STORAGE_MODE"),
+        }
+        try:
+            os.environ["DATABASE_URL"] = "postgres://user:pass@example.com:5432/stock"
+            os.environ["STORAGE_MODE"] = "postgresql"
+            Config.reset_instance()
+
+            config = Config.get_instance()
+
+            self.assertEqual(
+                config.get_db_url(),
+                "postgresql+psycopg://user:pass@example.com:5432/stock",
+            )
+        finally:
+            Config.reset_instance()
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_postgresql_mode_requires_database_url(self):
+        original_env = {
+            "DATABASE_URL": os.environ.get("DATABASE_URL"),
+            "PGSQL_URL": os.environ.get("PGSQL_URL"),
+            "POSTGRES_URL": os.environ.get("POSTGRES_URL"),
+            "STORAGE_MODE": os.environ.get("STORAGE_MODE"),
+        }
+        try:
+            os.environ["STORAGE_MODE"] = "postgresql"
+            for key in ("DATABASE_URL", "PGSQL_URL", "POSTGRES_URL"):
+                os.environ.pop(key, None)
+            Config.reset_instance()
+
+            with self.assertRaises(ValueError):
+                Config.get_instance().get_db_url()
+        finally:
+            Config.reset_instance()
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
     
     def test_parse_sniper_value(self):
         """测试解析狙击点位数值"""
@@ -151,6 +235,48 @@ class TestStorage(unittest.TestCase):
         finally:
             DatabaseManager.reset_instance()
 
+    def test_read_cache_is_invalidated_after_write_transaction(self):
+        original_env = {
+            "DB_CACHE_TTL_SECONDS": os.environ.get("DB_CACHE_TTL_SECONDS"),
+        }
+        try:
+            os.environ["DB_CACHE_TTL_SECONDS"] = "60"
+            Config.reset_instance()
+            DatabaseManager.reset_instance()
+            db = DatabaseManager(db_url="sqlite:///:memory:")
+
+            self.assertEqual(db.get_latest_data("600519", days=1), [])
+            db.save_daily_data(
+                pd.DataFrame(
+                    [
+                        {
+                            'date': date(2026, 4, 1),
+                            'open': 10,
+                            'high': 11,
+                            'low': 9,
+                            'close': 10.5,
+                            'volume': 100,
+                            'amount': 1050,
+                            'pct_chg': 1.2,
+                        }
+                    ]
+                ),
+                code='600519',
+                data_source='test',
+            )
+
+            latest = db.get_latest_data("600519", days=1)
+
+            self.assertEqual(len(latest), 1)
+            self.assertEqual(latest[0].close, 10.5)
+        finally:
+            DatabaseManager.reset_instance()
+            Config.reset_instance()
+            if original_env["DB_CACHE_TTL_SECONDS"] is None:
+                os.environ.pop("DB_CACHE_TTL_SECONDS", None)
+            else:
+                os.environ["DB_CACHE_TTL_SECONDS"] = original_env["DB_CACHE_TTL_SECONDS"]
+
     def test_save_daily_data_sqlite_concurrent_same_code_date_counts_only_new_rows(self):
         DatabaseManager.reset_instance()
         temp_dir = tempfile.TemporaryDirectory()
@@ -209,8 +335,8 @@ class TestStorage(unittest.TestCase):
 
             self.assertEqual(total, 1)
         finally:
-            temp_dir.cleanup()
             DatabaseManager.reset_instance()
+            temp_dir.cleanup()
 
 if __name__ == '__main__':
     unittest.main()

@@ -26,6 +26,7 @@ x-common: &common
     - ../reports:/app/reports
     - ../.env:/app/.env
     - ../strategies:/app/strategies:ro
+    # 使用 PostgreSQL 作为主存储后，data/reports 挂载可按需保留作本地兜底或移除
     # 如需覆盖前端静态资源，可挂载本地 static 目录
     # - ../static:/app/static:ro
 
@@ -35,6 +36,11 @@ x-common: &common
     # Web/API service bind address (must be 0.0.0.0 inside container)
     - WEBUI_HOST=0.0.0.0
     # API_PORT 从 .env 文件读取，无需在此硬编码
+
+    # Cloud database examples (uncomment in .env or here when needed)
+    # - STORAGE_MODE=postgresql
+    # - DATABASE_URL=postgresql+psycopg://user:pass@postgres.example.com:5432/stock_db
+    # - DB_CACHE_TTL_SECONDS=30
 
     # 代理设置（如果需要）
     # - http_proxy=http://host.docker.internal:10809

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [新功能] 存储层支持 `DATABASE_URL` / `PGSQL_URL` 连接 PostgreSQL；分析历史中的 LLM 报告 payload 与上下文快照统一写入 SQL 主存储，并新增进程内热读缓存。
 
 ## [3.14.2] - 2026-04-30
 

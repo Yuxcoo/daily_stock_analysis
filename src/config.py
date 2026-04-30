@@ -787,11 +787,14 @@ class Config:
     prefetch_realtime_quotes: bool = True
 
     # === 数据库配置 ===
+    storage_mode: str = "sqlite"
+    database_url: Optional[str] = None
     database_path: str = "./data/stock_analysis.db"
     sqlite_wal_enabled: bool = True
     sqlite_busy_timeout_ms: int = 5000
     sqlite_write_retry_max: int = 3
     sqlite_write_retry_base_delay: float = 0.1
+    db_cache_ttl_seconds: int = 0
 
     # 是否保存分析上下文快照（用于历史回溯）
     save_context_snapshot: bool = True
@@ -1449,6 +1452,12 @@ class Config:
             ),
             md2img_engine=cls._parse_md2img_engine(os.getenv('MD2IMG_ENGINE', 'wkhtmltoimage')),
             prefetch_realtime_quotes=os.getenv('PREFETCH_REALTIME_QUOTES', 'true').lower() == 'true',
+            storage_mode=os.getenv('STORAGE_MODE', 'sqlite').strip().lower() or 'sqlite',
+            database_url=(
+                os.getenv('DATABASE_URL')
+                or os.getenv('PGSQL_URL')
+                or os.getenv('POSTGRES_URL')
+            ),
             database_path=os.getenv('DATABASE_PATH', './data/stock_analysis.db'),
             sqlite_wal_enabled=os.getenv('SQLITE_WAL_ENABLED', 'true').lower() == 'true',
             sqlite_busy_timeout_ms=parse_env_int(
@@ -1468,6 +1477,12 @@ class Config:
                 0.1,
                 field_name='SQLITE_WRITE_RETRY_BASE_DELAY',
                 minimum=0.0,
+            ),
+            db_cache_ttl_seconds=parse_env_int(
+                os.getenv('DB_CACHE_TTL_SECONDS'),
+                0,
+                field_name='DB_CACHE_TTL_SECONDS',
+                minimum=0,
             ),
             save_context_snapshot=os.getenv('SAVE_CONTEXT_SNAPSHOT', 'true').lower() == 'true',
             backtest_enabled=os.getenv('BACKTEST_ENABLED', 'true').lower() == 'true',
@@ -2456,6 +2471,18 @@ class Config:
         
         自动创建数据库目录（如果不存在）
         """
+        if self.database_url:
+            if self.database_url.startswith("postgres://"):
+                return self.database_url.replace("postgres://", "postgresql+psycopg://", 1)
+            if self.database_url.startswith("postgresql://"):
+                return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+            return self.database_url
+
+        if self.storage_mode in {"postgres", "postgresql", "pgsql"}:
+            raise ValueError(
+                "STORAGE_MODE=postgresql requires DATABASE_URL or PGSQL_URL."
+            )
+
         db_path = Path(self.database_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{db_path.absolute()}"

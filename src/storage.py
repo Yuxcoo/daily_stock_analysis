@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any, TYPE_CHECKING, Tuple, Callable, TypeVar
@@ -44,6 +45,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import (
     declarative_base,
     sessionmaker,
@@ -55,6 +57,44 @@ from src.config import get_config
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+
+
+class _TTLCache:
+    """Small in-process TTL cache for hot read paths."""
+
+    def __init__(self, ttl_seconds: int = 0):
+        self._ttl_seconds = max(0, int(ttl_seconds or 0))
+        self._items: Dict[str, Tuple[float, Any]] = {}
+        self._lock = threading.RLock()
+
+    @property
+    def enabled(self) -> bool:
+        return self._ttl_seconds > 0
+
+    def get(self, key: str) -> Any:
+        if not self.enabled:
+            return None
+        now = time.monotonic()
+        with self._lock:
+            item = self._items.get(key)
+            if item is None:
+                return None
+            expires_at, value = item
+            if expires_at <= now:
+                self._items.pop(key, None)
+                return None
+            return value
+
+    def set(self, key: str, value: Any) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self._items[key] = (time.monotonic() + self._ttl_seconds, value)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
 
 # SQLAlchemy ORM 基类
 Base = declarative_base()
@@ -663,6 +703,7 @@ class DatabaseManager:
         self._sqlite_busy_timeout_ms = config.sqlite_busy_timeout_ms
         self._sqlite_write_retry_max = config.sqlite_write_retry_max
         self._sqlite_write_retry_base_delay = config.sqlite_write_retry_base_delay
+        self._cache = _TTLCache(config.db_cache_ttl_seconds)
 
         engine_kwargs = {
             "echo": False,
@@ -679,6 +720,7 @@ class DatabaseManager:
             **engine_kwargs,
         )
         self._is_sqlite_engine = self._engine.url.get_backend_name() == 'sqlite'
+        self._is_postgresql_engine = self._engine.url.get_backend_name().startswith('postgresql')
         self._sqlite_file_db = self._is_sqlite_engine and self._is_file_sqlite_database()
         self._install_sqlite_pragma_handler()
         
@@ -752,6 +794,15 @@ class DatabaseManager:
         database = (self._engine.url.database or "").strip()
         return bool(database) and database.lower() != ":memory:"
 
+    def _cache_get(self, key: str) -> Any:
+        return self._cache.get(key)
+
+    def _cache_set(self, key: str, value: Any) -> None:
+        self._cache.set(key, value)
+
+    def _invalidate_cache(self) -> None:
+        self._cache.clear()
+
     def _run_write_transaction(
         self,
         operation_name: str,
@@ -769,6 +820,7 @@ class DatabaseManager:
                     session.connection().exec_driver_sql("BEGIN IMMEDIATE")
                 result = write_operation(session)
                 session.commit()
+                self._invalidate_cache()
                 return result
             except OperationalError as exc:
                 session.rollback()
@@ -849,6 +901,7 @@ class DatabaseManager:
         try:
             yield session
             session.commit()
+            self._invalidate_cache()
         except Exception:
             session.rollback()
             raise
@@ -903,6 +956,11 @@ class DatabaseManager:
         Returns:
             StockDaily 对象列表（按日期降序）
         """
+        cache_key = f"latest_data:{code}:{int(days)}"
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         with self.get_session() as session:
             results = session.execute(
                 select(StockDaily)
@@ -910,8 +968,10 @@ class DatabaseManager:
                 .order_by(desc(StockDaily.date))
                 .limit(days)
             ).scalars().all()
-            
-            return list(results)
+
+            records = list(results)
+            self._cache_set(cache_key, records)
+            return records
 
     def save_news_intel(
         self,
@@ -1182,6 +1242,11 @@ class DatabaseManager:
     ) -> int:
         """
         保存分析结果历史记录
+
+        SQL 主存储同时保存结构化字段与半结构化报告 payload：
+        - raw_result：LLM / Agent 原始结果 JSON
+        - news_content：报告关联新闻文本
+        - context_snapshot：分析上下文快照 JSON
         """
         if result is None:
             return 0
@@ -1239,6 +1304,14 @@ class DatabaseManager:
         - If query_id is not provided, apply days-based time filtering.
         - exclude_query_id: exclude records with this query_id (for history comparison).
         """
+        cache_key = (
+            f"analysis_history:{code or ''}:{query_id or ''}:"
+            f"{int(days)}:{int(limit)}:{exclude_query_id or ''}"
+        )
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         cutoff_date = datetime.now() - timedelta(days=days)
 
         with self.get_session() as session:
@@ -1263,7 +1336,9 @@ class DatabaseManager:
                 .limit(limit)
             ).scalars().all()
 
-            return list(results)
+            records = list(results)
+            self._cache_set(cache_key, records)
+            return records
     
     def get_analysis_history_paginated(
         self,
@@ -1332,10 +1407,16 @@ class DatabaseManager:
         Returns:
             AnalysisHistory 对象，不存在返回 None
         """
+        cache_key = f"analysis_history_by_id:{int(record_id)}"
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         with self.get_session() as session:
             result = session.execute(
                 select(AnalysisHistory).where(AnalysisHistory.id == record_id)
             ).scalars().first()
+            self._cache_set(cache_key, result)
             return result
 
     def delete_analysis_history_records(self, record_ids: List[int]) -> int:
@@ -1523,6 +1604,40 @@ class DatabaseManager:
                         )
                     )
                 return len(new_records)
+            elif self._is_postgresql_engine:
+                existing_dates = set(
+                    session.execute(
+                        select(StockDaily.date).where(
+                            and_(
+                                StockDaily.code == code,
+                                StockDaily.date.in_(batch_dates),
+                            )
+                        )
+                    ).scalars().all()
+                )
+                stmt = postgresql_insert(StockDaily).values(records)
+                excluded = stmt.excluded
+                session.execute(
+                    stmt.on_conflict_do_update(
+                        index_elements=['code', 'date'],
+                        set_={
+                            'open': excluded.open,
+                            'high': excluded.high,
+                            'low': excluded.low,
+                            'close': excluded.close,
+                            'volume': excluded.volume,
+                            'amount': excluded.amount,
+                            'pct_chg': excluded.pct_chg,
+                            'ma5': excluded.ma5,
+                            'ma10': excluded.ma10,
+                            'ma20': excluded.ma20,
+                            'volume_ratio': excluded.volume_ratio,
+                            'data_source': excluded.data_source,
+                            'updated_at': excluded.updated_at,
+                        },
+                    )
+                )
+                return len([record for record in records if record['date'] not in existing_dates])
             else:
                 existing_rows = {
                     row.date: row

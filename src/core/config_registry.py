@@ -1882,6 +1882,8 @@ def build_schema_response() -> Dict[str, Any]:
 
 
 def _is_sensitive_key(key: str) -> bool:
+    if key in {"DATABASE_URL", "PGSQL_URL", "POSTGRES_URL"}:
+        return True
     markers = ("KEY", "TOKEN", "SECRET", "PASSWORD")
     return any(marker in key for marker in markers)
 
@@ -1930,6 +1932,15 @@ def _infer_category(key: str) -> str:
     )) or "WEBHOOK" in key:
         return "notification"
     if key.startswith(("LOG_", "SCHEDULE_", "WEBUI_", "HTTP_", "HTTPS_", "MAX_", "DEBUG", "MARKET_REVIEW_", "TRADING_DAY_", "ANALYSIS_DELAY")):
+        return "system"
+    if key in {
+        "STORAGE_MODE",
+        "DATABASE_URL",
+        "PGSQL_URL",
+        "POSTGRES_URL",
+        "DATABASE_PATH",
+        "DB_CACHE_TTL_SECONDS",
+    } or key.startswith("SQLITE_"):
         return "system"
     return "uncategorized"
 
